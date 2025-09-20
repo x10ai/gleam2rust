@@ -1,0 +1,2 @@
+tree-sitter
+git+https://github.com/gleam-lang/tree-sitter-gleam.git
