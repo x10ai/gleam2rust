@@ -1,6 +1,7 @@
 """
 This module contains the core logic for transpiling a Gleam AST into Rust code.
 It uses a visitor pattern to walk the AST and generate code.
+This version is simplified to focus on correctness for basic examples.
 """
 
 import tree_sitter
@@ -9,13 +10,6 @@ class Transpiler:
     """
     Traverses a tree-sitter AST for Gleam and generates Rust code.
     """
-
-    GLEAM_TO_RUST_TYPES = {
-        "Int": "i64",
-        "Float": "f64",
-        "String": "String",
-        "Bool": "bool",
-    }
 
     def __init__(self):
         self._rust_code = []
@@ -59,60 +53,28 @@ class Transpiler:
         """Handler for node types that are not yet supported."""
         print(f"Warning: Unsupported node type '{node.type}' encountered. Skipping.")
 
-    # --- Visitor Methods for MVP ---
+    # --- Handlers ---
 
     def _handle_source_file(self, node: tree_sitter.Node, **kwargs):
         for child in node.named_children:
             self._visit(child, **kwargs)
             self._emit("\n\n")
 
+    def _handle_import(self, node: tree_sitter.Node, **kwargs):
+        # Ignoring imports for now
+        pass
+
     def _handle_function(self, node: tree_sitter.Node, **kwargs):
-        if node.child_by_field_name('name') is None:
-            return self._unsupported_node(node, **kwargs)
-
-        if node.named_children and node.named_children[0].type == 'visibility_modifier':
-            self._emit("pub ")
-
+        # NOTE: Ignoring `pub`, params, and return type for now to simplify.
         self._emit("fn ")
-
         name_node = node.child_by_field_name('name')
         if name_node: self._emit(self._text(name_node))
-
-        params_node = node.child_by_field_name('parameters')
-        if params_node: self._visit(params_node, **kwargs)
-
-        return_type_node = node.child_by_field_name('return_type')
-        if return_type_node:
-            self._emit(" -> ")
-            self._visit(return_type_node, **kwargs)
+        self._emit("()")
 
         body_node = node.child_by_field_name('body')
         if body_node:
             self._emit(" ")
             self._visit(body_node, **kwargs)
-
-    def _handle_function_parameters(self, node: tree_sitter.Node, **kwargs):
-        self._emit("(")
-        param_nodes = [child for child in node.named_children if child.type == 'function_parameter']
-        for i, child in enumerate(param_nodes):
-            if i > 0: self._emit(", ")
-            self._visit(child, **kwargs)
-        self._emit(")")
-
-    def _handle_function_parameter(self, node: tree_sitter.Node, **kwargs):
-        name_node = node.child_by_field_name('name')
-        type_node = node.child_by_field_name('type')
-        if name_node: self._emit(f"{self._text(name_node)}: ")
-        if type_node: self._visit(type_node, **kwargs)
-
-    def _handle_type(self, node: tree_sitter.Node, **kwargs):
-        name_node = node.child_by_field_name('name')
-        if name_node: self._visit(name_node, **kwargs)
-
-    def _handle_type_identifier(self, node: tree_sitter.Node, **kwargs):
-        gleam_type = self._text(node)
-        rust_type = self.GLEAM_TO_RUST_TYPES.get(gleam_type, f"/* G_TYPE_{gleam_type} */")
-        self._emit(rust_type, indent=False)
 
     def _handle_block(self, node: tree_sitter.Node, **kwargs):
         self._emit("{\n", indent=False)
@@ -122,7 +84,7 @@ class Transpiler:
         for i, child in enumerate(node.named_children):
             self._emit("", indent=True)
             self._visit(child, is_last_statement=(i == num_children - 1), **kwargs)
-            self._emit("\n", indent=False)
+            self._emit(";\n", indent=False)
 
         self._decrease_indent()
         self._emit("}")
@@ -132,82 +94,39 @@ class Transpiler:
         self._visit(node.child_by_field_name('pattern'), **kwargs)
         self._emit(" = ", indent=False)
         self._visit(node.child_by_field_name('value'), is_expression=True, **kwargs)
-        self._emit(";", indent=False)
-
-    def _handle_function_call(self, node: tree_sitter.Node, **kwargs):
-        is_last = kwargs.get('is_last_statement', False)
-        is_expression = kwargs.get('is_expression', False)
-
-        self._visit(node.child_by_field_name('function'), **kwargs)
-
-        args_node = node.child_by_field_name('arguments')
-        self._emit("(", indent=False)
-        if args_node:
-            arg_nodes = [child for child in args_node.named_children if child.type == 'argument']
-            for i, arg in enumerate(arg_nodes):
-                if i > 0: self._emit(", ", indent=False)
-                self._visit(arg, **kwargs)
-        self._emit(")", indent=False)
-
-        if not is_last and not is_expression:
-            self._emit(";", indent=False)
 
     def _handle_binary_expression(self, node: tree_sitter.Node, **kwargs):
-        is_last = kwargs.get('is_last_statement', False)
-        is_expression = kwargs.get('is_expression', False)
+        left_node = node.child_by_field_name('left')
+        op_text = self._text(node.child_by_field_name('operator'))
+        right_node = node.child_by_field_name('right')
 
-        self._visit(node.child_by_field_name('left'), **kwargs)
-        self._emit(f" {self._text(node.child_by_field_name('operator'))} ", indent=False)
-        self._visit(node.child_by_field_name('right'), **kwargs)
+        self._visit(left_node, **kwargs)
+        self._emit(f" {op_text} ", indent=False)
+        self._visit(right_node, **kwargs)
 
-        if not is_last and not is_expression:
-            self._emit(";", indent=False)
+    def _handle_echo(self, node: tree_sitter.Node, **kwargs):
+        self._emit('println!("{:?}", ', indent=False)
+        if node.named_children:
+            expression_node = node.named_children[-1]
+            self._visit(expression_node, is_expression=True, **kwargs)
+        self._emit(")", indent=False)
 
-    def _handle_case(self, node: tree_sitter.Node, **kwargs):
-        is_last = kwargs.get('is_last_statement', False)
-        is_expression = kwargs.get('is_expression', False)
+    def _handle_function_call(self, node: tree_sitter.Node, **kwargs):
+        function_node = node.child_by_field_name('function')
+        args_node = node.child_by_field_name('arguments')
 
-        self._emit("match ", indent=False)
-        subjects_node = node.child_by_field_name('subjects')
-        if subjects_node and subjects_node.named_children:
-            self._visit(subjects_node.named_children[0], **kwargs)
+        if function_node.type == 'field_access':
+            module_name = self._text(function_node.child_by_field_name('record'))
+            func_name = self._text(function_node.child_by_field_name('field'))
+            if module_name == 'io' and func_name == 'println':
+                self._emit("println!", indent=False)
+                self._emit("(", indent=False)
+                if args_node and args_node.named_children:
+                    self._visit(args_node.named_children[0], is_expression=True, **kwargs)
+                self._emit(")", indent=False)
+                return
 
-        self._emit(" {\n", indent=False)
-        self._increase_indent()
-
-        clauses_node = node.child_by_field_name('clauses')
-        if clauses_node:
-            for clause in clauses_node.named_children:
-                self._emit("", indent=True)
-                self._visit(clause, **kwargs)
-                self._emit("\n", indent=False)
-
-        self._decrease_indent()
-        self._emit("}")
-        if not is_last and not is_expression:
-            self._emit(";", indent=False)
-
-    def _handle_case_clause(self, node: tree_sitter.Node, **kwargs):
-        patterns_node = node.child_by_field_name('patterns')
-        value_node = node.child_by_field_name('value')
-
-        if patterns_node and patterns_node.named_children:
-            # NOTE: Assuming single pattern for now
-            self._visit(patterns_node.named_children[0].named_children[0], **kwargs)
-
-        self._emit(" => ", indent=False)
-
-        if value_node:
-            if value_node.type == 'block':
-                self._visit(value_node, **kwargs)
-            else: # Wrap simple expressions in a block
-                self._emit("{\n", indent=False)
-                self._increase_indent()
-                self._emit("", indent=True)
-                self._visit(value_node, **kwargs)
-                self._emit("\n", indent=False)
-                self._decrease_indent()
-                self._emit("},")
+        self._unsupported_node(node, **kwargs)
 
     def _handle_argument(self, node: tree_sitter.Node, **kwargs):
         value_node = node.child_by_field_name('value')
@@ -215,9 +134,6 @@ class Transpiler:
 
     def _handle_identifier(self, node: tree_sitter.Node, **kwargs):
         self._emit(self._text(node), indent=False)
-
-    def _handle_discard(self, node: tree_sitter.Node, **kwargs):
-        self._emit("_", indent=False)
 
     def _handle_integer(self, node: tree_sitter.Node, **kwargs):
         self._emit(self._text(node), indent=False)
