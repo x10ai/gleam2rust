@@ -1,0 +1,7 @@
+fn main() {
+  let x = 1;
+  println!("{:?}", match x {
+    1 => "one",
+    _ => "other",
+  });
+}

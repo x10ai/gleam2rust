@@ -159,3 +159,44 @@ class Transpiler:
 
     def _handle_float(self, node: tree_sitter.Node, **kwargs):
         self._emit(self._text(node), indent=False)
+
+    def _handle_case(self, node: tree_sitter.Node, **kwargs):
+        # For now, wrap the match expression in a println! to make it verifiable.
+        self._emit("println!(\"{:?}\", ", indent=False)
+        self._emit("match ", indent=False)
+        subjects_node = node.child_by_field_name('subjects')
+        if subjects_node and subjects_node.named_children:
+            self._visit(subjects_node.named_children[0], **kwargs)
+
+        self._emit(" {\n", indent=False)
+        self._increase_indent()
+
+        clauses_node = node.child_by_field_name('clauses')
+        if clauses_node:
+            for clause in clauses_node.named_children:
+                self._emit("", indent=True)
+                self._visit(clause, **kwargs)
+                self._emit("\n", indent=False)
+
+        self._decrease_indent()
+        self._emit("", indent=True)
+        self._emit("}", indent=False)
+        self._emit(")", indent=False) # Close the println!
+
+    def _handle_case_clause(self, node: tree_sitter.Node, **kwargs):
+        patterns_node = node.child_by_field_name('patterns')
+        value_node = node.child_by_field_name('value')
+
+        if patterns_node and patterns_node.named_children:
+            # The AST nests the actual pattern inside a few nodes
+            self._visit(patterns_node.named_children[0].named_children[0], **kwargs)
+
+        self._emit(" => ", indent=False)
+
+        if value_node:
+            self._visit(value_node, **kwargs)
+
+        self._emit(",", indent=False)
+
+    def _handle_discard(self, node: tree_sitter.Node, **kwargs):
+        self._emit("_", indent=False)
