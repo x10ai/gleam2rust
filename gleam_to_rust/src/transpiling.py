@@ -11,6 +11,20 @@ class Transpiler:
     Traverses a tree-sitter AST for Gleam and generates Rust code.
     """
 
+    OPERATOR_MAP = {
+        # Float operators
+        "+.": "+",
+        "-.": "-",
+        "*.": "*",
+        "/.": "/",
+        ">.": ">",
+        "<.": "<",
+        ">=.": ">=",
+        "<=.": "<=",
+        # String concat
+        "<>": "+",
+    }
+
     def __init__(self):
         self._rust_code = []
         self._indentation_level = 0
@@ -100,8 +114,10 @@ class Transpiler:
         op_text = self._text(node.child_by_field_name('operator'))
         right_node = node.child_by_field_name('right')
 
+        rust_op = self.OPERATOR_MAP.get(op_text, op_text)
+
         self._visit(left_node, **kwargs)
-        self._emit(f" {op_text} ", indent=False)
+        self._emit(f" {rust_op} ", indent=False)
         self._visit(right_node, **kwargs)
 
     def _handle_echo(self, node: tree_sitter.Node, **kwargs):
@@ -139,4 +155,7 @@ class Transpiler:
         self._emit(self._text(node), indent=False)
 
     def _handle_string(self, node: tree_sitter.Node, **kwargs):
+        self._emit(self._text(node), indent=False)
+
+    def _handle_float(self, node: tree_sitter.Node, **kwargs):
         self._emit(self._text(node), indent=False)
